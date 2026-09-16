@@ -1110,7 +1110,7 @@ const UI_ICONS={
   stability:`<svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 19h18M6 16h11l2 3H4zM10 16l3-8 4 8M13 8V4M10.5 5.5 13 3l2.5 2.5"/><circle cx="8" cy="20" r="1.2"/><circle cx="18" cy="20" r="1.2"/></svg>`
 };
 const HAND_TYPE_ICONS={
-  finger2:`<svg class="ui-icon" viewBox="0 0 24 20" aria-hidden="true"><path d="M3 4v12m0-6h5l2 2M21 4v12m0-6h-5l-2 2"/><circle cx="3" cy="10" r="1.5"/><circle cx="21" cy="10" r="1.5"/></svg>`,
+  finger2:`<svg class="ui-icon" viewBox="0 0 24 20" aria-hidden="true"><path d="M10 16 4 3Q9 5 12 12Q15 5 20 3L14 16M10 16l-2 2m6-2 2 2"/><circle cx="12" cy="14" r="2"/></svg>`,
   finger3:`<svg class="ui-icon" viewBox="0 0 24 20" aria-hidden="true"><path d="M3 4l7 5m-7 7 7-5m11-1-7 1"/><circle cx="3" cy="4" r="1.4"/><circle cx="3" cy="16" r="1.4"/><circle cx="21" cy="10" r="1.4"/><circle cx="12" cy="10" r="1.5"/></svg>`,
   finger5:UI_ICONS.hand
 };
@@ -1867,7 +1867,7 @@ function renderHandSkeleton(digits){
     const paths={pair1:[[62,100],[105,112],[145,126],[178,143]],pair2:[[62,220],[105,208],[145,194],[178,177]],opp:[[258,160],[220,160],[188,160],[165,160]]};
     art=`<path class="palm-bone" d="M42 82v156m0-138h20m-20 120h20m216-60h-20"/>${digits.map(d=>{const p=paths[d.key];return`<polyline class="bone" points="${p.map(x=>x.join(',')).join(' ')}"/>${circles(d,p.slice(0,3))}<text class="digit-label" x="${p[0][0]}" y="${p[0][1]-14}">${d.name}</text>`}).join('')}`;
   }else{
-    art=`<path class="palm-bone" d="M48 105v110m224-110v110"/><polyline class="bone" points="48,160 82,160 112,148 140,160"/><polyline class="bone" points="272,160 238,160 208,148 180,160"/><circle class="joint" cx="48" cy="160" r="8"/><text class="joint-code" x="48" y="162.5">J1</text><circle class="joint" cx="272" cy="160" r="8"/><text class="joint-code" x="272" y="162.5">J1</text><path d="M141 153l9 7-9 7m38-14-9 7 9 7" fill="none" stroke="var(--accent)" stroke-width="1.6"/><text class="digit-label" x="48" y="91">左夹指</text><text class="digit-label" x="272" y="91">右夹指</text>`;
+    art=`<g fill="none" stroke="var(--text)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M90 70 160 210 176 238M230 70 160 210 144 238"/><circle cx="160" cy="210" r="7" fill="var(--bg)"/></g><g fill="none" stroke="var(--accent)" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M111 107h30m-7-6 7 6-7 6M209 107h-30m7-6-7 6 7 6"/></g><text class="digit-label" x="82" y="51">左夹指</text><text class="digit-label" x="238" y="51">右夹指</text><text class="digit-label" x="160" y="263">J1 · 根部开合</text>`;
   }
   const legend=state.type==='finger5'?'<strong>关节缩写</strong><br><code>CMC</code> 腕掌关节　<code>MCP</code> 掌指关节<br><code>PIP</code> 近侧指间关节　<code>DIP</code> 远侧指间关节<br><code>IP</code> 拇指指间关节<br><br>实线圆为参与计算的主动关节，虚线圆为当前未启用层级。':state.type==='finger3'?'<strong>三指两对一</strong><br>左侧两指合力与右侧单指平衡；MCP/PIP/DIP在这里表示从根部到末端的等效层级，不声明人体解剖结构。':'<strong>二指对夹</strong><br>两侧夹指相向运动，每侧仅核算J1根部开合关节。';
   el.innerHTML=`<svg class="hand-skeleton" viewBox="0 0 320 300" aria-label="${state.type==='finger5'?'五指手关节骨架':'夹爪结构示意'}">${art}</svg><div class="hand-skeleton-legend">${legend}</div>`;
@@ -2241,6 +2241,40 @@ function calcPlanetaryGear(){
 // URDF: offline health audit and minimum template
 // ============================================================
 let lastUrdfReport=null;
+let urdfFileHandle=null,urdfFileName='',urdfDiskDirty=false,urdfSaving=false;
+window.addEventListener('beforeunload',e=>{if(urdfDiskDirty||urdfSaving){e.preventDefault();e.returnValue=''}});
+document.addEventListener('input',e=>{if(e.target.closest('#urdfInspector')||e.target.id==='urdfText')urdfDiskDirty=true});
+function urdfCanReplace(){return !urdfSaving&&(!urdfDiskDirty||confirm('URDF修改尚未保存到磁盘，确定放弃这些修改吗？'))}
+async function openUrdfFile(){
+  if(!urdfCanReplace())return;
+  if(!window.showOpenFilePicker){document.getElementById('urdfFile').click();return}
+  try{const [handle]=await window.showOpenFilePicker({types:[{description:'URDF / XML',accept:{'application/xml':['.urdf','.xml']}}],multiple:false});
+    const file=await handle.getFile(),text=await file.text();
+    document.getElementById('urdfText').value=text;urdfFileHandle=handle;urdfFileName=file.name;urdfDiskDirty=false;urdfRawDirty=false;parseUrdfEditor();auditUrdf();
+    urdfSetSync('已打开磁盘文件：'+file.name,true);
+  }catch(e){if(e.name!=='AbortError')toast('打开失败：'+e.message)}
+}
+async function saveUrdfSource(){
+  if(urdfSaving)return false;
+  if(urdfRawDirty){parseUrdfEditor();if(!urdfEditorDoc)return false}
+  if(!applyUrdfEditorToText())return false;
+  const text=document.getElementById('urdfText').value;
+  urdfDiskDirty=true;urdfSaving=true;let writable;
+  try{
+    let handle=urdfFileHandle;
+    if(!handle){
+      if(!window.showSaveFilePicker){toast('此浏览器无法直接写入本地文件。请用Chrome/Edge打开，或点击“下载修改后URDF”并替换原文件。尚未保存到磁盘。');return false}
+      handle=await window.showSaveFilePicker({suggestedName:urdfFileName||'robot.urdf',types:[{description:'URDF',accept:{'application/xml':['.urdf','.xml']}}]});
+    }
+    writable=await handle.createWritable();await writable.write(text);await writable.close();writable=null;
+    const verified=await (await handle.getFile()).text();if(verified!==text)throw Error('写入后回读内容不一致');
+    urdfFileHandle=handle;urdfFileName=handle.name;
+    urdfDiskDirty=urdfFormDirty||urdfEditorDirty||urdfRawDirty||document.getElementById('urdfText').value!==text;
+    urdfSetSync('已保存到磁盘：'+handle.name+(urdfDiskDirty?'（另有新修改待保存）':''),!urdfDiskDirty);
+    toast('已写入并回读验证：'+handle.name);return true;
+  }catch(e){if(writable)try{await writable.abort()}catch(_){}urdfDiskDirty=true;urdfSetSync('尚未保存到磁盘');toast(e.name==='AbortError'?'保存已取消，修改仍保留在页面':'保存失败，修改仍保留：'+e.message);return false}
+  finally{urdfSaving=false}
+}
 let urdfEditorDoc=null,urdfEditorKind='link',urdfEditorIndex=0,urdfEditorDirty=false,urdfRawDirty=false,urdfFormDirty=false,urdfWorkspaceView='edit',urdfSourceCache={text:null,objects:null,doc:null};
 function htmlSafe(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 function urdfSample(){return `<?xml version="1.0"?>
@@ -2257,11 +2291,12 @@ function urdfSample(){return `<?xml version="1.0"?>
 </robot>`}
 
 function renderURDF(){
+  urdfFileHandle=null;urdfFileName='';urdfDiskDirty=false;
   document.getElementById('content').innerHTML=`
     <div class="breadcrumb">Qbot <span class="sep">›</span> <span>URDF工具</span></div>
     <div class="sec-title">📦 URDF结构化编辑器 <span class="badge badge-live">离线可用</span></div>
     <div class="sec-desc">左侧选择Link或Joint；右侧分别完成参数修改、原文核对和全局比较，避免把所有信息同时堆在一个页面。</div>
-    <div class="urdf-toolbar"><label class="btn btn-primary" style="cursor:pointer">打开URDF<input type="file" id="urdfFile" accept=".urdf,.xml,text/xml" hidden onchange="loadUrdfFile(this)"></label><button class="btn btn-ghost" onclick="downloadUrdf()">下载修改后URDF</button><button class="btn btn-ghost" onclick="auditUrdfFromEditor()">健康检查</button><button class="btn btn-ghost" onclick="exportUrdfReport()">导出检查报告</button><span class="spacer"></span><span id="urdfSyncState" class="metric-sub"><span class="dirty-dot clean"></span>结构与原文已同步</span></div>
+    <div class="urdf-toolbar"><button class="btn btn-primary" onclick="openUrdfFile()">打开URDF</button><input type="file" id="urdfFile" accept=".urdf,.xml,text/xml" hidden onchange="loadUrdfFile(this)"><button class="btn btn-primary" onclick="saveUrdfSource()">保存到源文件</button><button class="btn btn-ghost" onclick="downloadUrdf()">下载修改后URDF</button><button class="btn btn-ghost" onclick="auditUrdfFromEditor()">健康检查</button><button class="btn btn-ghost" onclick="exportUrdfReport()">导出检查报告</button><span class="spacer"></span><span id="urdfSyncState" class="metric-sub"><span class="dirty-dot clean"></span>结构与原文已同步</span></div>
     <div class="workflow-strip"><span class="workflow-step active">1 选择对象</span><span class="workflow-step">2 修改参数</span><span class="workflow-step">3 原文核对</span><span class="workflow-step">4 下载文件</span></div>
     <div class="urdf-editor-layout">
       <div class="panel"><h3>对象清单</h3><div id="urdfEditorStats" class="metric-sub" style="margin-bottom:8px"></div><div class="urdf-kind-tabs"><button id="urdfTabLink" class="active" onclick="showUrdfKind('link')">Links</button><button id="urdfTabJoint" onclick="showUrdfKind('joint')">Joints</button></div><div class="fg" style="margin-top:8px"><input type="text" id="urdfFilter" placeholder="按名称筛选" oninput="renderUrdfObjectList(this.value)" style="width:100%;padding:7px 8px;background:#202623;border:1px solid var(--border);border-radius:4px;color:var(--text)"></div><div id="urdfObjectList" class="urdf-object-list"></div></div>
@@ -2392,11 +2427,11 @@ function renderUrdfInspector(){
   if(urdfEditorKind==='link'){
     const inertial=urdfDirect(item,'inertial'),origin=urdfDirect(inertial,'origin'),mass=urdfDirect(inertial,'mass'),iner=urdfDirect(inertial,'inertia');
     const visuals=[...item.children].filter(x=>x.tagName==='visual'),collisions=[...item.children].filter(x=>x.tagName==='collision'),meshes=[...item.querySelectorAll('mesh')].map(x=>urdfAttr(x,'filename')).filter(Boolean);
-    host.innerHTML=`<div class="prop-grid"><div class="prop-section">基本信息</div><div class="prop-field wide"><label>Link名称</label><input id="ue_link_name" value="${htmlSafe(name)}"></div><div class="prop-field wide"><label style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="ue_has_inertial" ${inertial?'checked':''} style="width:auto"> 启用惯量参数</label></div><div class="prop-section">质量与质心</div><div class="prop-field"><label>质量 kg</label><input type="number" id="ue_mass" value="${htmlSafe(urdfAttr(mass,'value'))}" step="0.001"></div><div class="prop-field"><label>质心 xyz (m)</label><input id="ue_com_xyz" value="${htmlSafe(urdfAttr(origin,'xyz','0 0 0'))}"></div><div class="prop-field wide"><label>惯量坐标 rpy (rad)</label><input id="ue_com_rpy" value="${htmlSafe(urdfAttr(origin,'rpy','0 0 0'))}"></div><div class="prop-section">惯量矩阵 kg·m²</div><div class="metric-sub wide">可先清空再输入，支持小数、负号和科学计数法；编辑过程不自动回填，点击“应用”时统一检查六项是否为有效数字。</div>${['ixx','ixy','ixz','iyy','iyz','izz'].map(k=>`<div class="prop-field"><label>${k}</label><input type="text" inputmode="decimal" autocomplete="off" id="ue_${k}" value="${htmlSafe(urdfAttr(iner,k))}"></div>`).join('')}<div class="prop-section">几何摘要</div><div class="prop-field"><label>Visual / Collision</label><input value="${visuals.length} / ${collisions.length}" disabled></div><div class="prop-field"><label>Mesh数量</label><input value="${meshes.length}" disabled></div><div class="prop-field wide"><label>Mesh路径（只读）</label><input value="${htmlSafe(meshes.join(' ; ')||'无')}" disabled></div></div><div style="display:flex;gap:6px;margin-top:12px"><button class="btn btn-primary" onclick="saveUrdfObject()">应用此Link修改</button><button class="btn btn-ghost" onclick="applyUrdfEditorToText()">应用并写入源文件</button></div>`;
+    host.innerHTML=`<div class="prop-grid"><div class="prop-section">基本信息</div><div class="prop-field wide"><label>Link名称</label><input id="ue_link_name" value="${htmlSafe(name)}"></div><div class="prop-field wide"><label style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="ue_has_inertial" ${inertial?'checked':''} style="width:auto"> 启用惯量参数</label></div><div class="prop-section">质量与质心</div><div class="prop-field"><label>质量 kg</label><input type="number" id="ue_mass" value="${htmlSafe(urdfAttr(mass,'value'))}" step="0.001"></div><div class="prop-field"><label>质心 xyz (m)</label><input id="ue_com_xyz" value="${htmlSafe(urdfAttr(origin,'xyz','0 0 0'))}"></div><div class="prop-field wide"><label>惯量坐标 rpy (rad)</label><input id="ue_com_rpy" value="${htmlSafe(urdfAttr(origin,'rpy','0 0 0'))}"></div><div class="prop-section">惯量矩阵 kg·m²</div><div class="metric-sub wide">可先清空再输入，支持小数、负号和科学计数法；编辑过程不自动回填，点击“应用”时统一检查六项是否为有效数字。</div>${['ixx','ixy','ixz','iyy','iyz','izz'].map(k=>`<div class="prop-field"><label>${k}</label><input type="text" inputmode="decimal" autocomplete="off" id="ue_${k}" value="${htmlSafe(urdfAttr(iner,k))}"></div>`).join('')}<div class="prop-section">几何摘要</div><div class="prop-field"><label>Visual / Collision</label><input value="${visuals.length} / ${collisions.length}" disabled></div><div class="prop-field"><label>Mesh数量</label><input value="${meshes.length}" disabled></div><div class="prop-field wide"><label>Mesh路径（只读）</label><input value="${htmlSafe(meshes.join(' ; ')||'无')}" disabled></div></div><div style="display:flex;gap:6px;margin-top:12px"><button class="btn btn-primary" onclick="saveUrdfObject()">应用此Link修改</button><button class="btn btn-ghost" onclick="saveUrdfSource()">应用并写入源文件</button></div>`;
   }else{
     const parent=urdfDirect(item,'parent'),child=urdfDirect(item,'child'),origin=urdfDirect(item,'origin'),axis=urdfDirect(item,'axis'),limit=urdfDirect(item,'limit'),dyn=urdfDirect(item,'dynamics'),mimic=urdfDirect(item,'mimic'),links=urdfEditorItems('link').map(x=>urdfAttr(x,'name'));
     const opts=selected=>links.map(n=>`<option value="${htmlSafe(n)}"${n===selected?' selected':''}>${htmlSafe(n)}</option>`).join('');
-    host.innerHTML=`<div class="prop-grid"><div class="prop-section">基本信息</div><div class="prop-field wide"><label>Joint名称</label><input id="ue_joint_name" value="${htmlSafe(name)}"></div><div class="prop-field"><label>类型</label><select id="ue_joint_type">${['fixed','revolute','continuous','prismatic','floating','planar'].map(t=>`<option value="${t}"${urdfAttr(item,'type')===t?' selected':''}>${t}</option>`).join('')}</select></div><div class="prop-field"><label>Parent Link</label><select id="ue_parent">${opts(urdfAttr(parent,'link'))}</select></div><div class="prop-field"><label>Child Link</label><select id="ue_child">${opts(urdfAttr(child,'link'))}</select></div><div class="prop-section">关节坐标</div><div class="prop-field"><label>origin xyz (m)</label><input id="ue_joint_xyz" value="${htmlSafe(urdfAttr(origin,'xyz','0 0 0'))}"></div><div class="prop-field"><label>origin rpy (rad)</label><input id="ue_joint_rpy" value="${htmlSafe(urdfAttr(origin,'rpy','0 0 0'))}"></div><div class="prop-field wide"><label>axis xyz</label><input id="ue_axis" value="${htmlSafe(urdfAttr(axis,'xyz','1 0 0'))}"></div><div class="prop-section">限位与动力学</div>${[['lower','下限 rad/m'],['upper','上限 rad/m'],['effort','最大力矩/力 Nm/N'],['velocity','最大速度 rad/s或m/s']].map(([k,l])=>`<div class="prop-field"><label>${l}</label><input type="number" id="ue_${k}" value="${htmlSafe(urdfAttr(limit,k))}" step="0.001"></div>`).join('')}<div class="prop-field"><label>damping</label><input type="number" id="ue_damping" value="${htmlSafe(urdfAttr(dyn,'damping'))}" step="0.001"></div><div class="prop-field"><label>friction</label><input type="number" id="ue_friction" value="${htmlSafe(urdfAttr(dyn,'friction'))}" step="0.001"></div><div class="prop-field wide"><label>mimic joint（可空）</label><input id="ue_mimic" value="${htmlSafe(urdfAttr(mimic,'joint'))}"></div></div><div style="display:flex;gap:6px;margin-top:12px"><button class="btn btn-primary" onclick="saveUrdfObject()">应用此Joint修改</button><button class="btn btn-ghost" onclick="applyUrdfEditorToText()">应用并写入源文件</button></div>`;
+    host.innerHTML=`<div class="prop-grid"><div class="prop-section">基本信息</div><div class="prop-field wide"><label>Joint名称</label><input id="ue_joint_name" value="${htmlSafe(name)}"></div><div class="prop-field"><label>类型</label><select id="ue_joint_type">${['fixed','revolute','continuous','prismatic','floating','planar'].map(t=>`<option value="${t}"${urdfAttr(item,'type')===t?' selected':''}>${t}</option>`).join('')}</select></div><div class="prop-field"><label>Parent Link</label><select id="ue_parent">${opts(urdfAttr(parent,'link'))}</select></div><div class="prop-field"><label>Child Link</label><select id="ue_child">${opts(urdfAttr(child,'link'))}</select></div><div class="prop-section">关节坐标</div><div class="prop-field"><label>origin xyz (m)</label><input id="ue_joint_xyz" value="${htmlSafe(urdfAttr(origin,'xyz','0 0 0'))}"></div><div class="prop-field"><label>origin rpy (rad)</label><input id="ue_joint_rpy" value="${htmlSafe(urdfAttr(origin,'rpy','0 0 0'))}"></div><div class="prop-field wide"><label>axis xyz</label><input id="ue_axis" value="${htmlSafe(urdfAttr(axis,'xyz','1 0 0'))}"></div><div class="prop-section">限位与动力学</div>${[['lower','下限 rad/m'],['upper','上限 rad/m'],['effort','最大力矩/力 Nm/N'],['velocity','最大速度 rad/s或m/s']].map(([k,l])=>`<div class="prop-field"><label>${l}</label><input type="number" id="ue_${k}" value="${htmlSafe(urdfAttr(limit,k))}" step="0.001"></div>`).join('')}<div class="prop-field"><label>damping</label><input type="number" id="ue_damping" value="${htmlSafe(urdfAttr(dyn,'damping'))}" step="0.001"></div><div class="prop-field"><label>friction</label><input type="number" id="ue_friction" value="${htmlSafe(urdfAttr(dyn,'friction'))}" step="0.001"></div><div class="prop-field wide"><label>mimic joint（可空）</label><input id="ue_mimic" value="${htmlSafe(urdfAttr(mimic,'joint'))}"></div></div><div style="display:flex;gap:6px;margin-top:12px"><button class="btn btn-primary" onclick="saveUrdfObject()">应用此Joint修改</button><button class="btn btn-ghost" onclick="saveUrdfSource()">应用并写入源文件</button></div>`;
   }
   urdfFormDirty=false;host.querySelectorAll('input,select').forEach(x=>{x.addEventListener('input',()=>{urdfFormDirty=true;urdfSetSync('当前对象有未保存修改')});x.addEventListener('change',()=>{if(urdfWorkspaceView==='source')renderUrdfSourceMapping()})});renderUrdfSourceMapping();
 }
@@ -2416,22 +2451,23 @@ function saveUrdfObject(showToast=true){
     item.setAttribute('name',name);item.setAttribute('type',type);if(old!==name){urdfEditorItems('joint').forEach(j=>{const m=urdfDirect(j,'mimic');if(urdfAttr(m,'joint')===old)m.setAttribute('joint',name)});[...urdfEditorDoc.querySelectorAll('transmission joint, ros2_control joint')].forEach(x=>{if(urdfAttr(x,'name')===old)x.setAttribute('name',name)})}urdfEnsure(item,'parent').setAttribute('link',parent);urdfEnsure(item,'child').setAttribute('link',child);urdfSetOrigin(item,'ue_joint_xyz','ue_joint_rpy');
     const movable=['revolute','continuous','prismatic'].includes(type);if(movable){urdfEnsure(item,'axis').setAttribute('xyz',urdfInput('ue_axis')||'1 0 0');const lim=urdfEnsure(item,'limit');for(const k of ['effort','velocity']){const v=urdfInput('ue_'+k);if(v!=='')lim.setAttribute(k,v)}if(type==='continuous'){lim.removeAttribute('lower');lim.removeAttribute('upper')}else for(const k of ['lower','upper']){const v=urdfInput('ue_'+k);if(v!=='')lim.setAttribute(k,v)}const damping=urdfInput('ue_damping'),friction=urdfInput('ue_friction');if(damping!==''||friction!==''){const d=urdfEnsure(item,'dynamics');if(damping!=='')d.setAttribute('damping',damping);if(friction!=='')d.setAttribute('friction',friction)}const mimic=urdfInput('ue_mimic'),oldM=urdfDirect(item,'mimic');if(mimic){urdfEnsure(item,'mimic').setAttribute('joint',mimic)}else oldM?.remove()}else{for(const k of ['axis','limit','dynamics','mimic'])urdfDirect(item,k)?.remove()}
   }
-  urdfEditorDirty=true;urdfFormDirty=false;lastUrdfReport=null;urdfSetSync('结构已修改，尚未覆盖原文');updateUrdfEditorStats();renderUrdfObjectList(document.getElementById('urdfFilter')?.value||'');renderUrdfInspector();renderUrdfOverview();if(showToast)toast('对象参数已保存');return true;
+  urdfDiskDirty=true;urdfEditorDirty=true;urdfFormDirty=false;lastUrdfReport=null;urdfSetSync('结构已修改，尚未覆盖原文');updateUrdfEditorStats();renderUrdfObjectList(document.getElementById('urdfFilter')?.value||'');renderUrdfInspector();renderUrdfOverview();if(showToast)toast('对象参数已保存');return true;
 }
 
 function formatUrdfXml(xml){
   const lines=xml.replace(/>\s*</g,'><').replace(/(>)(<)(\/?)/g,'$1\n$2$3').split('\n');let pad=0;return lines.map(line=>{const t=line.trim();if(/^<\//.test(t))pad=Math.max(0,pad-1);const out='  '.repeat(pad)+t;if(/^<[^!?/][^>]*>$/.test(t)&&!t.endsWith('/>')&&!/<\/[^>]+>$/.test(t))pad++;return out}).join('\n')
 }
-function applyUrdfEditorToText(){if(!urdfEditorDoc)return false;if(urdfRawDirty){toast('原文已修改，请先“从原文重新解析”');return false}if(urdfFormDirty&&!saveUrdfObject(false))return false;const xml=new XMLSerializer().serializeToString(urdfEditorDoc);document.getElementById('urdfText').value=formatUrdfXml(xml);urdfEditorDirty=false;urdfRawDirty=false;urdfFormDirty=false;urdfSetSync('结构与原文已同步',true);renderUrdfObjectList(document.getElementById('urdfFilter')?.value||'');renderUrdfSourceMapping();toast('已覆盖原始URDF文本');return true}
+function applyUrdfEditorToText(){if(!urdfEditorDoc)return false;if(urdfRawDirty){toast('原文已修改，请先“从原文重新解析”');return false}if(urdfFormDirty&&!saveUrdfObject(false))return false;const xml=new XMLSerializer().serializeToString(urdfEditorDoc);document.getElementById('urdfText').value=formatUrdfXml(xml);urdfEditorDirty=false;urdfRawDirty=false;urdfFormDirty=false;urdfSetSync('页面原文已同步；磁盘保存需点击“保存到源文件”');renderUrdfObjectList(document.getElementById('urdfFilter')?.value||'');renderUrdfSourceMapping();toast('面板已同步到页面原文，尚未执行磁盘保存');return true}
 function auditUrdfFromEditor(){if(!applyUrdfEditorToText())return;auditUrdf()}
 function downloadUrdf(){if(!applyUrdfEditorToText())return;const text=document.getElementById('urdfText').value,blob=new Blob([text],{type:'application/xml'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=(urdfEditorDoc?.documentElement.getAttribute('name')||'robot')+'.urdf';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);toast('URDF已下载')}
 
 function loadUrdfFile(input){
-  const f=input.files&&input.files[0];if(!f)return;
+  const f=input.files&&input.files[0];if(!f)return;urdfFileHandle=null;urdfFileName=f.name;urdfDiskDirty=false;
   const reader=new FileReader();reader.onload=()=>{document.getElementById('urdfText').value=String(reader.result||'');urdfRawDirty=false;parseUrdfEditor();auditUrdf()};reader.readAsText(f,'utf-8');
 }
 
 function generateUrdfTemplate(){
+  if(!urdfCanReplace())return;urdfFileHandle=null;urdfFileName='robot.urdf';urdfDiskDirty=true;
   const m=Math.max(.001,finite(document.getElementById('urdfMass').value,5)),x=Math.max(.001,finite(document.getElementById('urdfX').value,300)/1000),y=Math.max(.001,finite(document.getElementById('urdfY').value,200)/1000),z=Math.max(.001,finite(document.getElementById('urdfZ').value,100)/1000);
   const ix=m*(y*y+z*z)/12,iy=m*(x*x+z*z)/12,iz=m*(x*x+y*y)/12;
   document.getElementById('urdfText').value=`<?xml version="1.0"?>
@@ -3166,6 +3202,7 @@ function subPlaceholder(sub){
 // NAVIGATION
 // ============================================================
 function navigate(section, sub, type){
+  if(document.getElementById('urdfText')&&!urdfCanReplace())return;
   captureCurrentInputs();
   if(section) state.section = section;
   if(sub){
